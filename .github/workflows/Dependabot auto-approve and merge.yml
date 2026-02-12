@@ -33,19 +33,65 @@ jobs:
 
           echo "Waiting for checks..."
           while true; do
-            # statusCheckRollup gives the combined status of all checks
-            STATUS=$(gh pr view "$PR_URL" --json statusCheckRollup -q '.statusCheckRollup.state')
-            echo "Current status: $STATUS"
+            # statusCheckRollup is an array of check run objects.
+            # Each object has a "status" field (COMPLETED, IN_PROGRESS, QUEUED, etc.)
+            # and completed ones have a "conclusion" field (SUCCESS, FAILURE, etc.).
+            # We need to check all of them to determine overall state.
 
-            if [ "$STATUS" == "SUCCESS" ]; then
-              echo "Checks passed!"
+            CHECKS_JSON=$(gh pr view "$PR_URL" --json statusCheckRollup -q '.statusCheckRollup')
+
+            # If the array is empty or null, checks haven't been registered yet
+            if [ -z "$CHECKS_JSON" ] || [ "$CHECKS_JSON" == "null" ] || [ "$CHECKS_JSON" == "[]" ]; then
+              echo "No checks found yet. Waiting..."
+              sleep 10
+              continue
+            fi
+
+            # Count total checks
+            TOTAL=$(echo "$CHECKS_JSON" | jq 'length')
+
+            # Count how many checks have completed
+            # CheckRun objects use "status" (COMPLETED) and "conclusion" (SUCCESS, FAILURE, etc.)
+            # StatusContext objects use "state" (SUCCESS, FAILURE, PENDING, etc.)
+            COMPLETED=$(echo "$CHECKS_JSON" | jq '[.[] | select(
+              (.status == "COMPLETED") or
+              (.state == "SUCCESS") or
+              (.state == "FAILURE") or
+              (.state == "ERROR")
+            )] | length')
+
+            echo ""
+            echo "===== Check Status Report ($COMPLETED/$TOTAL completed) ====="
+
+            # Log each check's name, status, and conclusion (safe fields only, no URLs or secrets)
+            echo "$CHECKS_JSON" | jq -r '.[] |
+              if .status then
+                # CheckRun object
+                "  [CheckRun]     name=\"\(.name)\"  status=\(.status)  conclusion=\(.conclusion // "N/A")"
+              else
+                # StatusContext object
+                "  [StatusContext] context=\"\(.context)\"  state=\(.state)"
+              end'
+
+            echo "==============================================="
+
+            if [ "$COMPLETED" -eq "$TOTAL" ]; then
+              # All checks completed, now check if any failed
+              FAILED=$(echo "$CHECKS_JSON" | jq '[.[] | select(
+                (.conclusion == "FAILURE") or
+                (.conclusion == "CANCELLED") or
+                (.conclusion == "TIMED_OUT") or
+                (.state == "FAILURE") or
+                (.state == "ERROR")
+              )] | length')
+
+              if [ "$FAILED" -gt 0 ]; then
+                echo "Some checks failed or errored ($FAILED failure(s))."
+                exit 1
+              fi
+
+              echo "All $TOTAL checks passed!"
               break
-            elif [ "$STATUS" == "FAILURE" ] || [ "$STATUS" == "ERROR" ]; then
-              echo "Checks failed."
-              exit 1
-            elif [ -z "$STATUS" ]; then
-               # Handle cases where checks haven't reported yet or don't exist
-               echo "Status is empty (checks might not have started). Waiting..."
             fi
 
             sleep 10
