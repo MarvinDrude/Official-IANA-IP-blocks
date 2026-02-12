@@ -9,25 +9,47 @@ permissions:
 
 jobs:
   dependabot:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     if: github.actor == 'dependabot[bot]' && github.repository == 'HotCakeX/Official-IANA-IP-blocks'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Approve and Enable Auto-merge
+      - name: Approve and Merge
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Approve the PR if not already approved
           gh pr checkout "$PR_URL"
-          if [ "$(gh pr status --json reviewDecision -q .currentBranch.reviewDecision)" != "APPROVED" ]; then
+
+          # Approve
+          REVIEW_DECISION=$(gh pr view "$PR_URL" --json reviewDecision -q .reviewDecision)
+          if [ "$REVIEW_DECISION" != "APPROVED" ]; then
             gh pr review --approve "$PR_URL"
+            echo "PR approved."
           else
-            echo "PR already approved, skipping approval."
+            echo "PR already approved."
           fi
 
-          # Enable auto-merge
-          # Merge only when all status checks and requirements are met.
-          gh pr merge --auto --merge "$PR_URL"
+          echo "Waiting for checks..."
+          while true; do
+            # statusCheckRollup gives the combined status of all checks
+            STATUS=$(gh pr view "$PR_URL" --json statusCheckRollup -q '.statusCheckRollup.state')
+            echo "Current status: $STATUS"
+
+            if [ "$STATUS" == "SUCCESS" ]; then
+              echo "Checks passed!"
+              break
+            elif [ "$STATUS" == "FAILURE" ] || [ "$STATUS" == "ERROR" ]; then
+              echo "Checks failed."
+              exit 1
+            elif [ -z "$STATUS" ]; then
+               # Handle cases where checks haven't reported yet or don't exist
+               echo "Status is empty (checks might not have started). Waiting..."
+            fi
+
+            sleep 10
+          done
+
+          # Merge
+          gh pr merge --merge --delete-branch "$PR_URL"
