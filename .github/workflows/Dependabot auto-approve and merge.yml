@@ -37,8 +37,9 @@ jobs:
             # Each object has a "status" field (COMPLETED, IN_PROGRESS, QUEUED, etc.)
             # and completed ones have a "conclusion" field (SUCCESS, FAILURE, etc.).
             # We need to check all of them to determine overall state.
+            # Exclude this workflow's own check run ("dependabot") to avoid a deadlock.
 
-            CHECKS_JSON=$(gh pr view "$PR_URL" --json statusCheckRollup -q '.statusCheckRollup')
+            CHECKS_JSON=$(gh pr view "$PR_URL" --json statusCheckRollup -q '[.statusCheckRollup[] | select(.name != "dependabot")]')
 
             # If the array is empty or null, checks haven't been registered yet
             if [ -z "$CHECKS_JSON" ] || [ "$CHECKS_JSON" == "null" ] || [ "$CHECKS_JSON" == "[]" ]; then
