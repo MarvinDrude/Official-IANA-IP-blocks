@@ -8,4 +8,4 @@ updates:
     directories:
       - "/ip-country-data/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
